@@ -18,7 +18,9 @@
 
 ## Deviations Found During Implementation
 
-_None yet. Add entries as they are discovered._
-
 | # | Area | Original file/function | Original behavior | .NET behavior | Reason |
 |---|------|----------------------|-------------------|---------------|--------|
+| D5 | Packet Framing | `MsgSynInfo.h` / `CMsgSynInfo` | Comment indicated 52-byte header struct | Wire layout contains 56 bytes: header (4) + attributes (20) + two 16-byte strings (32) = 56 bytes (+8 trailer = 64) | Accurate sizing prevents buffer underflow and bounds mismatches. |
+| D6 | Packet Trailer Trimming | `PacketReader.cs` | Unsafe C++ cast raw buffer leaving trailer in memory | `PacketReader` trims buffer to declared `WireProtocol.ReadLength` when full wire packet is provided | Prevents string parser from misinterpreting "TQServer" trailer as length-prefixed string list. |
+| D7 | Single-Owner Social Concurrency | `Team.cpp`, `SquareDeal.cpp`, `Syndicate.cpp` | Multi-threaded synchronization with OS mutexes/critical sections | Single-owner isolation: all state updates occur strictly within `MapGroupLoop` | Preserves OPUS §4.1/§4.2 lock-free guarantee across teams, trade, guilds, and friends. |
+| D8 | Entity Spatial & Hashing Lookups | `CUserList`, `CRoleList` | Linear linked-list traversals | O(1) keyed `Dictionary<uint, IWorldEntity>` and spatial `GameBlock` hashing | High-throughput entity queries maintaining predictable latency under 2,000+ concurrent players. |

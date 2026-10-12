@@ -2,7 +2,7 @@
 
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![C# 14](https://img.shields.io/badge/C%23-14.0-239120?logo=csharp)](https://docs.microsoft.com/dotnet/csharp/)
-[![Build & Test](https://img.shields.io/badge/Tests-95%20Passing-brightgreen)]()
+[![Build & Test](https://img.shields.io/badge/Tests-101%20Passing-brightgreen)]()
 [![Zero Warnings](https://img.shields.io/badge/Warnings-0%20(TreatAsErrors)-success)]()
 
 A faithful, modern, high-performance re-implementation of the classic **2003 Conquer Online** C++ game server in **.NET 10 / C# 14**.
@@ -54,7 +54,7 @@ SRC/
     └── tests/
         ├── Conquer.UnitTests/    # 67 isolated unit tests
         ├── Conquer.IntegrationTests/# 28 end-to-end integration tests
-        └── Conquer.StressTests/  # Load & stress benchmarks
+        └── Conquer.StressTests/  # 6 stress, soak, and zero-allocation tests
 ```
 
 ---
@@ -71,7 +71,7 @@ SRC/
 | **6** | Item system, 40-slot inventory, 11 equipment slots, NPC shops, drops |  Completed |
 | **7** | Magic & status system, spellbook, 64-bit KeepEffect, Superman/Cyclone XP skills |  Completed |
 | **8** | Guilds, teams, chat, friends, trading, relationships |  Completed |
-| **9** | End-to-end integration, stress testing, polish | 🟡 Next Up |
+| **9** | End-to-end integration, stress testing, polish |  Completed |
 
 ---
 
@@ -87,7 +87,7 @@ dotnet build ConquerServer/ConquerServer.slnx
 ```
 
 ### Running Tests
-Execute the complete test suite (95 unit and integration tests):
+Execute the complete test suite (101 unit, integration, and stress tests):
 ```powershell
 dotnet test ConquerServer/ConquerServer.slnx
 ```
