@@ -25,6 +25,7 @@
     <ProjectReference Include="..\..\src\Conquer.Shared\Conquer.Shared.csproj" />
     <ProjectReference Include="..\..\src\Conquer.Data\Conquer.Data.csproj" />
     <ProjectReference Include="..\..\src\Conquer.NpcServer\Conquer.NpcServer.csproj" />
+    <ProjectReference Include="..\..\src\Conquer.GameServer\Conquer.GameServer.csproj" />
   </ItemGroup>
 
 </Project>

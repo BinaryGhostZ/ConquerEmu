@@ -10,4 +10,14 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
   </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Conquer.Shared\Conquer.Shared.csproj" />
+    <ProjectReference Include="..\Conquer.Net\Conquer.Net.csproj" />
+    <ProjectReference Include="..\Conquer.Data\Conquer.Data.csproj" />
+    <ProjectReference Include="..\Conquer.Runtime\Conquer.Runtime.csproj" />
+    <ProjectReference Include="..\Conquer.GameServer\Conquer.GameServer.csproj" />
+    <ProjectReference Include="..\Conquer.AccountServer\Conquer.AccountServer.csproj" />
+    <ProjectReference Include="..\Conquer.NpcServer\Conquer.NpcServer.csproj" />
+  </ItemGroup>
 </Project>

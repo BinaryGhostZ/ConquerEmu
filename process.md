@@ -336,11 +336,17 @@ Each message is a typed struct sent through `Channel<T>`.
   4. `SocketKernel_ConcurrentProducers_PipelineThroughput`: 8 concurrent worker threads streaming 16,000 encrypted frames over loopback `SecuritySocket` with active Blowfish/Cast5 ciphers, validating zero frame corruption or socket deadlocks.
   5. `CombatAndMagic_MassiveConcurrentResolution`: 50 concurrent spellcasters casting Thunder on monsters in parallel through `MapGroupLoop`, verifying HP and MP deductions without state corruption.
   6. `TransferUnderFire_RoutingContinuity`: 20,000 messages routed through `WorldRouter` during an active mid-flight `Rebind` between two `MapGroupLoop` instances, delivering 100% of messages with 0 dropped.
+- Implemented `GameServerWorker` in `Conquer.GameServer` managing the full MsgServer lifecycle:
+  - Spawns and starts `WorldHost` with partitioned core maps (TwinCity, PhoenixCastle, ApeMountain, DesertCity, BirdIsland).
+  - Starts TCP game listener on port 5816 accepting client connections, wrapping them in `SecuritySocket`, binding to `WorldRouter`, and routing packets into `WorldLoop` and `MapGroupLoop`s.
+  - Starts TCP IPC listener on port 5817 accepting `MsgLoginAccount` hand-offs from `AccountServerWorker`.
+  - Configured generic host composition in `Conquer.Host` configuring DI, telemetry metrics, and background service execution.
+- Added `GameServerHostIntegrationTests` (2 integration tests) validating listener binding, client connection handling, IPC token pairing, and graceful shutdown.
 - Updated documentation:
   - Documented deviations D5..D8 in `DEVIATIONS.md` covering wire layouts, framing guards, lock-free concurrency, and spatial indexing.
   - Verified 100% of tests pass across all test suites (`Conquer.UnitTests`, `Conquer.IntegrationTests`, `Conquer.StressTests`).
   - Verified 0 warnings and 0 errors under `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>` and `<AllowUnsafeBlocks>false</AllowUnsafeBlocks>` across all 11 projects.
-- Solution status: 101/101 tests passing (67 unit tests + 28 integration tests + 6 stress/soak tests), 0 warnings, 0 errors. All 9 phases completed!
+- Solution status: 103/103 tests passing (67 unit tests + 30 integration tests + 6 stress/soak tests), 0 warnings, 0 errors. All 9 phases completed!
 
 ## 9. Rules for Any Agent
 
