@@ -33,6 +33,8 @@ public sealed class InventoryPackage
         return true;
     }
 
+    public bool Remove(uint itemId) => Remove(itemId, out _);
+
     public bool Remove(uint itemId, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out Item? item)
     {
         return _items.Remove(itemId, out item);

@@ -2,7 +2,7 @@
 
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-512BD4?logo=dotnet)](https://dotnet.microsoft.com/)
 [![C# 14](https://img.shields.io/badge/C%23-14.0-239120?logo=csharp)](https://docs.microsoft.com/dotnet/csharp/)
-[![Build & Test](https://img.shields.io/badge/Tests-79%20Passing-brightgreen)]()
+[![Build & Test](https://img.shields.io/badge/Tests-95%20Passing-brightgreen)]()
 [![Zero Warnings](https://img.shields.io/badge/Warnings-0%20(TreatAsErrors)-success)]()
 
 A faithful, modern, high-performance re-implementation of the classic **2003 Conquer Online** C++ game server in **.NET 10 / C# 14**.
@@ -15,7 +15,7 @@ ConquerEmu preserves the core 2003 distributed server design while adopting mode
 
 1. **Three Process Topology:**
    - **Account Server:** Authentication, server registry, and one-time login hand-off tokens.
-   - **Game Server (MsgServer):** World loop, MapGroup kernel loops, authoritative combat, inventory, items, magic, and game rules.
+   - **Game Server (MsgServer):** World loop, MapGroup kernel loops, authoritative combat, inventory, items, magic, social systems, and game rules.
    - **NPC Server:** Independent AI simulation, 18x18-cell dormancy grid, generator spawners, and 8-way pathfinding state machines.
 
 2. **Single-Owner Concurrency:**
@@ -45,15 +45,15 @@ SRC/
     ├── src/
     │   ├── Conquer.Shared/       # Packet models, wire framing, constants, Direction, spans
     │   ├── Conquer.Net/          # SecuritySocket, Blowfish/Cast5 crypto, rate limiters
-    │   ├── Conquer.Runtime/      # MapGroupLoop, GameMap, spatial partitioning, Combat, Magic
+    │   ├── Conquer.Runtime/      # MapGroupLoop, GameMap, spatial partitioning, Combat, Magic, Social
     │   ├── Conquer.Data/         # Entity repositories, cq_* data mappings
     │   ├── Conquer.AccountServer/# Account auth, session tokens, server registry
     │   ├── Conquer.GameServer/   # World loop, player lifecycle, map dispatch
     │   ├── Conquer.NpcServer/    # NpcBrain AI, NpcGenerator, pathfinding, dormancy
     │   └── Conquer.Host/         # Generic host composition, DI, metrics
     └── tests/
-        ├── Conquer.UnitTests/    # 55 isolated unit tests
-        ├── Conquer.IntegrationTests/# 24 end-to-end integration tests
+        ├── Conquer.UnitTests/    # 67 isolated unit tests
+        ├── Conquer.IntegrationTests/# 28 end-to-end integration tests
         └── Conquer.StressTests/  # Load & stress benchmarks
 ```
 
@@ -70,8 +70,8 @@ SRC/
 | **5** | NpcServer, AI state machines, spawners, dual TCP/Channel transport |  Completed |
 | **6** | Item system, 40-slot inventory, 11 equipment slots, NPC shops, drops |  Completed |
 | **7** | Magic & status system, spellbook, 64-bit KeepEffect, Superman/Cyclone XP skills |  Completed |
-| **8** | Guilds, teams, chat, friends, trading, relationships | 🟡 Next Up |
-| **9** | End-to-end integration, stress testing, polish | ⚪ Planned |
+| **8** | Guilds, teams, chat, friends, trading, relationships |  Completed |
+| **9** | End-to-end integration, stress testing, polish | 🟡 Next Up |
 
 ---
 
@@ -87,7 +87,7 @@ dotnet build ConquerServer/ConquerServer.slnx
 ```
 
 ### Running Tests
-Execute the complete test suite (79 unit and integration tests):
+Execute the complete test suite (95 unit and integration tests):
 ```powershell
 dotnet test ConquerServer/ConquerServer.slnx
 ```

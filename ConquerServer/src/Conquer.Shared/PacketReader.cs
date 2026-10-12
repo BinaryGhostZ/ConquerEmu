@@ -17,6 +17,15 @@ public ref struct PacketReader
 
     public PacketReader(ReadOnlySpan<byte> buffer, int startPosition = 4)
     {
+        if (startPosition >= WireProtocol.MinPacketSize && buffer.Length >= WireProtocol.MinPacketSize)
+        {
+            ushort declaredLen = BinaryPrimitives.ReadUInt16LittleEndian(buffer);
+            if (declaredLen >= WireProtocol.MinPacketSize && declaredLen < buffer.Length)
+            {
+                buffer = buffer[..declaredLen];
+            }
+        }
+
         _buffer = buffer;
         Position = startPosition; // Default 4: skip [len:2][type:2] header
     }

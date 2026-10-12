@@ -35,6 +35,7 @@ public class Player : IWorldEntity
     public byte Pose { get; set; } = 100; // Original: _ACTION_STANDBY = 100
     public uint Status { get; set; }
     public uint SynIdRank { get; set; }
+    public uint TeamId { get; set; }
     public uint ArmorType { get; set; }
     public uint WeaponRType { get; set; }
 

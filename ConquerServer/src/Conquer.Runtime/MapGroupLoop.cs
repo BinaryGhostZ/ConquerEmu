@@ -60,6 +60,18 @@ public class MapGroupLoop : GameLoop
     /// <summary>NPC Shop manager.</summary>
     public ShopManager ShopManager { get; } = new();
 
+    /// <summary>Team manager for parties and exp sharing.</summary>
+    public TeamManager TeamManager { get; } = new();
+
+    /// <summary>Trade manager for secure two-player item/silver exchange.</summary>
+    public TradeManager TradeManager { get; } = new();
+
+    /// <summary>Syndicate (Guild) manager.</summary>
+    public SyndicateManager SyndicateManager { get; } = new();
+
+    /// <summary>Friend relationship manager.</summary>
+    public FriendManager FriendManager { get; } = new();
+
     /// <summary>Item type data lookup delegate.</summary>
     public Func<uint, Conquer.Data.ItemTypeModel?>? ItemTypeLookup { get; set; }
 
@@ -154,6 +166,16 @@ public class MapGroupLoop : GameLoop
             _ = NpcTransport.SendAsync(new NpcPacket(mapId, PacketType.Player, spawnBytes)).AsTask();
         }
 
+        // Notify online friends that player entered
+        var friends = FriendManager.GetFriends(player.Id);
+        foreach (var friendId in friends.Keys)
+        {
+            if (_playersById.TryGetValue(friendId, out var onlineFriend))
+            {
+                SendFriendMsg(onlineFriend, FriendManager.CreateOnlineNotification(player.Id, player.Name, player.LookFace, (byte)player.Level));
+            }
+        }
+
         return true;
     }
 
@@ -181,6 +203,27 @@ public class MapGroupLoop : GameLoop
             var delAction = new MsgAction(0, player.Id, (ushort)player.PosX, (ushort)player.PosY, 0, ActionType.DelRole, 0);
             byte[] delBytes = MsgAction.Encode(delAction);
             _ = NpcTransport.SendAsync(new NpcPacket(player.MapId, PacketType.Action, delBytes)).AsTask();
+        }
+
+        // Social cleanup: abort trade, leave team, notify friends
+        var activeTrade = TradeManager.GetSession(playerId);
+        if (activeTrade != null)
+        {
+            activeTrade.Abort();
+            var other = activeTrade.GetOtherPlayer(playerId);
+            SendTradeMsg(other, MsgTrade.Create(TradeAction.False));
+            TradeManager.EndTrade(activeTrade);
+        }
+
+        TeamManager.DismissPlayerTeam(playerId);
+
+        var leavingFriends = FriendManager.GetFriends(playerId);
+        foreach (var friendId in leavingFriends.Keys)
+        {
+            if (_playersById.TryGetValue(friendId, out var onlineFriend))
+            {
+                SendFriendMsg(onlineFriend, FriendManager.CreateOfflineNotification(playerId, player.Name));
+            }
         }
 
         return true;
@@ -463,6 +506,26 @@ public class MapGroupLoop : GameLoop
 
             case PacketType.MapItem:
                 HandleMapItem(player, payload);
+                break;
+
+            case PacketType.Talk:
+                HandleTalk(player, payload);
+                break;
+
+            case PacketType.Team:
+                HandleTeam(player, payload);
+                break;
+
+            case PacketType.Trade:
+                HandleTrade(player, payload);
+                break;
+
+            case PacketType.Syndicate:
+                HandleSyndicate(player, payload);
+                break;
+
+            case PacketType.Friend:
+                HandleFriend(player, payload);
                 break;
 
             default:
@@ -1513,6 +1576,15 @@ public class MapGroupLoop : GameLoop
         // Monster death: drop silver and remove from map
         if (victim is Monster monster)
         {
+            if (killer is Player killerKp)
+            {
+                var killerTeam = TeamManager.GetPlayerTeam(killerKp.Id);
+                if (killerTeam != null)
+                {
+                    killerTeam.AwardTeamExp(killerKp, monster.Level * 10);
+                }
+            }
+
             if (monster.DropMoney > 0 && _maps.TryGetValue(monster.MapId, out var dropMap))
             {
                 uint dropItemId = NextTrapId();
@@ -1715,6 +1787,606 @@ public class MapGroupLoop : GameLoop
             }
         }
     }
+
+    #region Phase 8 Social Handlers (Talk, Team, Trade, Syndicate, Friend)
+
+    private readonly Dictionary<uint, uint> _pendingTradeApplies = new();
+
+    private void HandleTalk(Player player, ReadOnlySpan<byte> payload)
+    {
+        var msg = MsgTalk.Decode(payload);
+
+        switch (msg.Channel)
+        {
+            case ChatChannel.Normal:
+            case ChatChannel.Action:
+                if (_maps.TryGetValue(player.MapId, out var map))
+                {
+                    var talkToBroadcast = new MsgTalk(
+                        WordsColor: msg.WordsColor != 0 ? msg.WordsColor : 0xFFFFFF,
+                        Channel: msg.Channel,
+                        Style: msg.Style,
+                        Time: (uint)Clock.GetUtcNow().ToUnixTimeSeconds(),
+                        Speaker: player.Name,
+                        Hearer: msg.Hearer,
+                        Emotion: msg.Emotion,
+                        Words: msg.Words);
+
+                    var writer = new PacketWriter();
+                    try
+                    {
+                        talkToBroadcast.Encode(ref writer);
+                        map.Broadcast(player.PosX, player.PosY, writer.AsSpan());
+                    }
+                    finally
+                    {
+                        writer.Dispose();
+                    }
+                }
+                break;
+
+            case ChatChannel.Private:
+            case ChatChannel.Whisper:
+                Player? target = null;
+                foreach (var p in _playersById.Values)
+                {
+                    if (string.Equals(p.Name, msg.Hearer, StringComparison.OrdinalIgnoreCase))
+                    {
+                        target = p;
+                        break;
+                    }
+                }
+
+                if (target != null)
+                {
+                    var whisper = new MsgTalk(
+                        WordsColor: msg.WordsColor,
+                        Channel: ChatChannel.Whisper,
+                        Style: msg.Style,
+                        Time: (uint)Clock.GetUtcNow().ToUnixTimeSeconds(),
+                        Speaker: player.Name,
+                        Hearer: target.Name,
+                        Emotion: msg.Emotion,
+                        Words: msg.Words);
+
+                    SendTalkMsg(target, whisper);
+                    SendTalkMsg(player, whisper);
+                }
+                else
+                {
+                    SendTalkMsg(player, MsgTalk.CreateSystem($"Player '{msg.Hearer}' is not online."));
+                }
+                break;
+
+            case ChatChannel.Team:
+                var team = TeamManager.GetPlayerTeam(player.Id);
+                if (team != null)
+                {
+                    var teamMsg = new MsgTalk(
+                        WordsColor: msg.WordsColor,
+                        Channel: ChatChannel.Team,
+                        Style: msg.Style,
+                        Time: (uint)Clock.GetUtcNow().ToUnixTimeSeconds(),
+                        Speaker: player.Name,
+                        Hearer: "Team",
+                        Emotion: msg.Emotion,
+                        Words: msg.Words);
+
+                    for (int i = 0; i < team.Members.Count; i++)
+                    {
+                        SendTalkMsg(team.Members[i], teamMsg);
+                    }
+                }
+                else
+                {
+                    SendTalkMsg(player, MsgTalk.CreateSystem("You are not currently in a team."));
+                }
+                break;
+
+            case ChatChannel.Syndicate:
+                var syn = SyndicateManager.GetPlayerSyndicate(player.Id);
+                if (syn != null)
+                {
+                    var synMsg = new MsgTalk(
+                        WordsColor: msg.WordsColor,
+                        Channel: ChatChannel.Syndicate,
+                        Style: msg.Style,
+                        Time: (uint)Clock.GetUtcNow().ToUnixTimeSeconds(),
+                        Speaker: player.Name,
+                        Hearer: syn.Name,
+                        Emotion: msg.Emotion,
+                        Words: msg.Words);
+
+                    foreach (var memberId in syn.Members.Keys)
+                    {
+                        if (_playersById.TryGetValue(memberId, out var memberPlayer))
+                        {
+                            SendTalkMsg(memberPlayer, synMsg);
+                        }
+                    }
+                }
+                else
+                {
+                    SendTalkMsg(player, MsgTalk.CreateSystem("You are not currently in a guild."));
+                }
+                break;
+
+            case ChatChannel.Global:
+            case ChatChannel.Talk:
+                var globalMsg = new MsgTalk(
+                    WordsColor: msg.WordsColor,
+                    Channel: ChatChannel.Talk,
+                    Style: msg.Style,
+                    Time: (uint)Clock.GetUtcNow().ToUnixTimeSeconds(),
+                    Speaker: player.Name,
+                    Hearer: "ALLUSERS",
+                    Emotion: msg.Emotion,
+                    Words: msg.Words);
+
+                foreach (var p in _playersById.Values)
+                {
+                    SendTalkMsg(p, globalMsg);
+                }
+                break;
+
+            default:
+                SendTalkMsg(player, MsgTalk.CreateSystem($"Unsupported channel: {msg.Channel}"));
+                break;
+        }
+    }
+
+    private void HandleTeam(Player player, ReadOnlySpan<byte> payload)
+    {
+        var msg = MsgTeam.Decode(payload);
+
+        switch (msg.Action)
+        {
+            case TeamAction.Create:
+                var newTeam = TeamManager.CreateTeam(player);
+                SendTeamMsg(player, MsgTeam.Create(TeamAction.Create, player.Id));
+                SendTeamMemberMsg(player, newTeam.CreateMemberListPacket());
+                break;
+
+            case TeamAction.ApplyJoin:
+                if (_playersById.TryGetValue(msg.PlayerId, out var targetLeader))
+                {
+                    var targetTeam = TeamManager.GetPlayerTeam(targetLeader.Id);
+                    if (targetTeam != null && targetTeam.IsLeader(targetLeader.Id) && !targetTeam.IsFull && !targetTeam.CloseTeam)
+                    {
+                        SendTeamMsg(targetLeader, MsgTeam.Create(TeamAction.ApplyJoin, player.Id));
+                    }
+                }
+                break;
+
+            case TeamAction.AgreeJoin:
+                var currentTeam = TeamManager.GetPlayerTeam(player.Id);
+                if (currentTeam != null && currentTeam.IsLeader(player.Id) && !currentTeam.IsFull)
+                {
+                    if (_playersById.TryGetValue(msg.PlayerId, out var applicant))
+                    {
+                        if (TeamManager.AddMember(currentTeam.Id, applicant))
+                        {
+                            var memberList = currentTeam.CreateMemberListPacket();
+                            for (int i = 0; i < currentTeam.Members.Count; i++)
+                            {
+                                SendTeamMemberMsg(currentTeam.Members[i], memberList);
+                            }
+                        }
+                    }
+                }
+                break;
+
+            case TeamAction.Invite:
+                var myTeam = TeamManager.GetPlayerTeam(player.Id);
+                if (myTeam != null && myTeam.IsLeader(player.Id) && !myTeam.IsFull)
+                {
+                    if (_playersById.TryGetValue(msg.PlayerId, out var invitee))
+                    {
+                        SendTeamMsg(invitee, MsgTeam.Create(TeamAction.Invite, player.Id));
+                    }
+                }
+                break;
+
+            case TeamAction.AcceptInvite:
+                if (_playersById.TryGetValue(msg.PlayerId, out var leader))
+                {
+                    var inviterTeam = TeamManager.GetPlayerTeam(leader.Id);
+                    if (inviterTeam != null && inviterTeam.IsLeader(leader.Id) && !inviterTeam.IsFull)
+                    {
+                        if (TeamManager.AddMember(inviterTeam.Id, player))
+                        {
+                            var memberList = inviterTeam.CreateMemberListPacket();
+                            for (int i = 0; i < inviterTeam.Members.Count; i++)
+                            {
+                                SendTeamMemberMsg(inviterTeam.Members[i], memberList);
+                            }
+                        }
+                    }
+                }
+                break;
+
+            case TeamAction.Leave:
+                var leavingTeam = TeamManager.GetPlayerTeam(player.Id);
+                if (leavingTeam != null)
+                {
+                    bool wasLeader = leavingTeam.IsLeader(player.Id);
+                    var formerMembers = leavingTeam.Members.ToArray();
+                    TeamManager.LeaveTeam(player);
+                    SendTeamMsg(player, MsgTeam.Create(TeamAction.Leave, player.Id));
+
+                    if (wasLeader)
+                    {
+                        for (int i = 0; i < formerMembers.Length; i++)
+                        {
+                            SendTeamMsg(formerMembers[i], MsgTeam.Create(TeamAction.Dismiss, player.Id));
+                        }
+                    }
+                    else
+                    {
+                        var updatedList = leavingTeam.CreateMemberListPacket();
+                        for (int i = 0; i < leavingTeam.Members.Count; i++)
+                        {
+                            SendTeamMemberMsg(leavingTeam.Members[i], updatedList);
+                        }
+                    }
+                }
+                break;
+
+            case TeamAction.Dismiss:
+                var teamToDismiss = TeamManager.GetPlayerTeam(player.Id);
+                if (teamToDismiss != null && teamToDismiss.IsLeader(player.Id))
+                {
+                    var members = teamToDismiss.Members.ToArray();
+                    TeamManager.DismissTeam(teamToDismiss.Id);
+                    for (int i = 0; i < members.Length; i++)
+                    {
+                        SendTeamMsg(members[i], MsgTeam.Create(TeamAction.Dismiss, player.Id));
+                    }
+                }
+                break;
+
+            case TeamAction.KickOut:
+                var kickTeam = TeamManager.GetPlayerTeam(player.Id);
+                if (kickTeam != null && kickTeam.IsLeader(player.Id))
+                {
+                    if (_playersById.TryGetValue(msg.PlayerId, out var kickedMember))
+                    {
+                        kickTeam.RemoveMember(kickedMember.Id);
+                        SendTeamMsg(kickedMember, MsgTeam.Create(TeamAction.KickOut, kickedMember.Id));
+                        var updatedList = kickTeam.CreateMemberListPacket();
+                        for (int i = 0; i < kickTeam.Members.Count; i++)
+                        {
+                            SendTeamMemberMsg(kickTeam.Members[i], updatedList);
+                        }
+                    }
+                }
+                break;
+
+            case TeamAction.CloseTeam:
+                var cTeam = TeamManager.GetPlayerTeam(player.Id);
+                if (cTeam != null && cTeam.IsLeader(player.Id))
+                {
+                    cTeam.CloseTeam = true;
+                    SendTeamMsg(player, MsgTeam.Create(TeamAction.CloseTeam, player.Id));
+                }
+                break;
+
+            case TeamAction.OpenTeam:
+                var oTeam = TeamManager.GetPlayerTeam(player.Id);
+                if (oTeam != null && oTeam.IsLeader(player.Id))
+                {
+                    oTeam.CloseTeam = false;
+                    SendTeamMsg(player, MsgTeam.Create(TeamAction.OpenTeam, player.Id));
+                }
+                break;
+        }
+    }
+
+    private void HandleTrade(Player player, ReadOnlySpan<byte> payload)
+    {
+        var msg = MsgTrade.Decode(payload);
+
+        switch (msg.Action)
+        {
+            case TradeAction.Apply:
+                uint targetId = msg.Data;
+                if (_playersById.TryGetValue(targetId, out var targetPlayer) &&
+                    targetPlayer.IsAlive && targetPlayer.MapId == player.MapId &&
+                    MapCoordinates.ChebyshevDistance(player.PosX, player.PosY, targetPlayer.PosX, targetPlayer.PosY) <= TradeSession.MaxTradeDistance)
+                {
+                    if (_pendingTradeApplies.TryGetValue(targetPlayer.Id, out uint applicantId) && applicantId == player.Id)
+                    {
+                        _pendingTradeApplies.Remove(targetPlayer.Id);
+                        var session = TradeManager.StartTrade(player, targetPlayer);
+                        if (session != null)
+                        {
+                            SendTradeMsg(player, MsgTrade.Create(TradeAction.Open, targetPlayer.Id));
+                            SendTradeMsg(targetPlayer, MsgTrade.Create(TradeAction.Open, player.Id));
+                        }
+                    }
+                    else
+                    {
+                        _pendingTradeApplies[player.Id] = targetPlayer.Id;
+                        SendTradeMsg(targetPlayer, MsgTrade.Create(TradeAction.Apply, player.Id));
+                    }
+                }
+                break;
+
+            case TradeAction.AddItem:
+                var itemSession = TradeManager.GetSession(player.Id);
+                if (itemSession != null)
+                {
+                    uint itemId = msg.Data;
+                    var item = player.Package.GetItem(itemId);
+                    if (item != null && itemSession.TryAddItem(player, item))
+                    {
+                        var other = itemSession.GetOtherPlayer(player.Id);
+                        SendTradeMsg(other, MsgTrade.Create(TradeAction.AddItem, item.Id));
+                        SendItemInfoMsg(other, item.ToMsgItemInfo(ItemInfoAction.Trade));
+                    }
+                    else
+                    {
+                        SendTradeMsg(player, MsgTrade.Create(TradeAction.AddItemFail, itemId));
+                    }
+                }
+                break;
+
+            case TradeAction.AddMoney:
+                var moneySession = TradeManager.GetSession(player.Id);
+                if (moneySession != null)
+                {
+                    uint amount = msg.Data;
+                    if (moneySession.TryAddMoney(player, amount))
+                    {
+                        var other = moneySession.GetOtherPlayer(player.Id);
+                        SendTradeMsg(other, MsgTrade.Create(TradeAction.MoneyAll, amount));
+                    }
+                }
+                break;
+
+            case TradeAction.Ok:
+                var okSession = TradeManager.GetSession(player.Id);
+                if (okSession != null)
+                {
+                    okSession.Confirm(player);
+                    var other = okSession.GetOtherPlayer(player.Id);
+                    SendTradeMsg(other, MsgTrade.Create(TradeAction.Ok, player.Id));
+
+                    if (okSession.BothConfirmed)
+                    {
+                        if (okSession.TryCommit())
+                        {
+                            SendTradeMsg(okSession.Player1, MsgTrade.Create(TradeAction.Success));
+                            SendTradeMsg(okSession.Player2, MsgTrade.Create(TradeAction.Success));
+                        }
+                        else
+                        {
+                            SendTradeMsg(okSession.Player1, MsgTrade.Create(TradeAction.False));
+                            SendTradeMsg(okSession.Player2, MsgTrade.Create(TradeAction.False));
+                        }
+                        TradeManager.EndTrade(okSession);
+                    }
+                }
+                break;
+
+            case TradeAction.Quit:
+                var quitSession = TradeManager.GetSession(player.Id);
+                if (quitSession != null)
+                {
+                    quitSession.Abort();
+                    SendTradeMsg(quitSession.Player1, MsgTrade.Create(TradeAction.False));
+                    SendTradeMsg(quitSession.Player2, MsgTrade.Create(TradeAction.False));
+                    TradeManager.EndTrade(quitSession);
+                }
+                break;
+        }
+    }
+
+    private void HandleSyndicate(Player player, ReadOnlySpan<byte> payload)
+    {
+        var msg = MsgSyndicate.Decode(payload);
+
+        switch (msg.Action)
+        {
+            case SyndicateAction.ApplyJoin:
+                if (msg.TargetId != 0)
+                {
+                    if (SyndicateManager.JoinSyndicate(msg.TargetId, player))
+                    {
+                        var syn = SyndicateManager.GetSyndicate(msg.TargetId);
+                        if (syn != null)
+                        {
+                            SendSynInfoMsg(player, syn.CreateSynInfoPacket());
+                            SendSyndicateMsg(player, MsgSyndicate.Create(SyndicateAction.SetSyn, syn.Id));
+                        }
+                    }
+                }
+                break;
+
+            case SyndicateAction.DonateMoney:
+                uint amount = msg.TargetId;
+                if (SyndicateManager.DonateMoney(player, amount))
+                {
+                    var syn = SyndicateManager.GetPlayerSyndicate(player.Id);
+                    if (syn != null)
+                    {
+                        SendSynInfoMsg(player, syn.CreateSynInfoPacket());
+                    }
+                }
+                break;
+
+            case SyndicateAction.Leave:
+                if (SyndicateManager.LeaveSyndicate(player))
+                {
+                    SendSyndicateMsg(player, MsgSyndicate.Create(SyndicateAction.Leave));
+                }
+                break;
+
+            case SyndicateAction.KickOutMember:
+                var mySyn = SyndicateManager.GetPlayerSyndicate(player.Id);
+                if (mySyn != null)
+                {
+                    if (SyndicateManager.KickMember(mySyn.Id, player.Id, msg.TargetId))
+                    {
+                        if (_playersById.TryGetValue(msg.TargetId, out var kickedPlayer))
+                        {
+                            SendSyndicateMsg(kickedPlayer, MsgSyndicate.Create(SyndicateAction.Leave));
+                        }
+                    }
+                }
+                break;
+
+            case SyndicateAction.QuerySynName:
+                var querySyn = SyndicateManager.GetSyndicate(msg.TargetId);
+                if (querySyn != null)
+                {
+                    SendSynInfoMsg(player, querySyn.CreateSynInfoPacket());
+                }
+                break;
+        }
+    }
+
+    private void HandleFriend(Player player, ReadOnlySpan<byte> payload)
+    {
+        var msg = MsgFriend.Decode(payload);
+
+        switch (msg.Action)
+        {
+            case FriendAction.Apply:
+                if (_playersById.TryGetValue(msg.FriendId, out var targetPlayer))
+                {
+                    FriendManager.AddFriend(player.Id, targetPlayer.Id, targetPlayer.Name);
+                    FriendManager.AddFriend(targetPlayer.Id, player.Id, player.Name);
+
+                    SendFriendMsg(player, MsgFriend.Create(FriendAction.Accept, targetPlayer.Id, targetPlayer.Name, isOnline: true, lookFace: targetPlayer.LookFace, level: (byte)targetPlayer.Level));
+                    SendFriendMsg(targetPlayer, MsgFriend.Create(FriendAction.Accept, player.Id, player.Name, isOnline: true, lookFace: player.LookFace, level: (byte)player.Level));
+                }
+                break;
+
+            case FriendAction.Break:
+                FriendManager.RemoveFriend(player.Id, msg.FriendId);
+                SendFriendMsg(player, MsgFriend.Create(FriendAction.Break, msg.FriendId, string.Empty));
+                break;
+
+            case FriendAction.GetInfo:
+                bool isOnline = _playersById.TryGetValue(msg.FriendId, out var onlineFriend);
+                SendFriendMsg(player, MsgFriend.Create(
+                    isOnline ? FriendAction.Online : FriendAction.Offline,
+                    msg.FriendId,
+                    msg.Name,
+                    isOnline: isOnline,
+                    lookFace: onlineFriend?.LookFace ?? 0,
+                    level: (byte)(onlineFriend?.Level ?? 0)));
+                break;
+        }
+    }
+
+    private static void SendTalkMsg(Player player, in MsgTalk msg)
+    {
+        var writer = new PacketWriter();
+        try
+        {
+            var copy = msg;
+            copy.Encode(ref writer);
+            player.Send(writer.AsSpan());
+        }
+        finally
+        {
+            writer.Dispose();
+        }
+    }
+
+    private static void SendTeamMsg(Player player, in MsgTeam msg)
+    {
+        var writer = new PacketWriter();
+        try
+        {
+            var copy = msg;
+            copy.Encode(ref writer);
+            player.Send(writer.AsSpan());
+        }
+        finally
+        {
+            writer.Dispose();
+        }
+    }
+
+    private static void SendTeamMemberMsg(Player player, in MsgTeamMember msg)
+    {
+        var writer = new PacketWriter();
+        try
+        {
+            var copy = msg;
+            copy.Encode(ref writer);
+            player.Send(writer.AsSpan());
+        }
+        finally
+        {
+            writer.Dispose();
+        }
+    }
+
+    private static void SendTradeMsg(Player player, in MsgTrade msg)
+    {
+        var writer = new PacketWriter();
+        try
+        {
+            var copy = msg;
+            copy.Encode(ref writer);
+            player.Send(writer.AsSpan());
+        }
+        finally
+        {
+            writer.Dispose();
+        }
+    }
+
+    private static void SendSyndicateMsg(Player player, in MsgSyndicate msg)
+    {
+        var writer = new PacketWriter();
+        try
+        {
+            var copy = msg;
+            copy.Encode(ref writer);
+            player.Send(writer.AsSpan());
+        }
+        finally
+        {
+            writer.Dispose();
+        }
+    }
+
+    private static void SendSynInfoMsg(Player player, in MsgSynInfo msg)
+    {
+        var writer = new PacketWriter();
+        try
+        {
+            var copy = msg;
+            copy.Encode(ref writer);
+            player.Send(writer.AsSpan());
+        }
+        finally
+        {
+            writer.Dispose();
+        }
+    }
+
+    private static void SendFriendMsg(Player player, in MsgFriend msg)
+    {
+        var writer = new PacketWriter();
+        try
+        {
+            var copy = msg;
+            copy.Encode(ref writer);
+            player.Send(writer.AsSpan());
+        }
+        finally
+        {
+            writer.Dispose();
+        }
+    }
+
+    #endregion
 
     protected override void OnStart()
     {

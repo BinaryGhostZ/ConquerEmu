@@ -289,10 +289,44 @@ Each message is a typed struct sent through `Channel<T>`.
   - `MagicIntegrationTests` (5 integration tests): single-target Thunder attack with MP deduction, monster damage, and `MsgMagicEffect` broadcast; Cure spell healing and MP deduction; Shield buff attaching `Defense1` and recalculating defense; Superman XP skill activation consuming full 100 XP and attaching `SuperSoldier`; and AoE FireCircle bomb damaging multiple monsters in radius.
 - Solution status: 79/79 tests passing (55 unit tests + 24 integration tests), 0 warnings, 0 errors across all 11 projects under `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`.
 
-### Phase 8 — Next Up
+### Phase 8 — Completed
+**Agent:** Antigravity  
+**Date:** 2026-10-12  
+**Work done:**
+- Created packet models in `Conquer.Shared/Messages/Packets/SocialPackets.cs`:
+  - `ChatChannel` enum (`Normal = 2000`, `Private/Whisper = 2001`, `Action = 2002`, `Team = 2003`, `Syndicate = 2004`, `System = 2005`, `Broadcast = 2008`, `Talk = 2011`, etc.).
+  - `MsgTalk` (PacketType 1004, 16-byte base header `[len:2][type:2][dwWordsColor:4][usChannel:2][usStyle:2][dwTime:4]` + 4 packed length-prefixed strings: `Speaker`, `Hearer`, `Emotion`, `Words`).
+  - `TeamAction` enum (`Create = 0`, `ApplyJoin = 1`, `LeaveTeam = 2`, `AgreeJoin = 3`, `Invite = 4`, `AgreeInvite = 5`, `Dismiss = 6`, `KickOut = 7`, `CloseTeam = 8`, `OpenTeam = 9`).
+  - `MsgTeam` (PacketType 1023, 12 bytes exact C++ binary layout `[len:2][type:2][unAction:2][pad:2][idPlayer:4]`).
+  - `TeamMemberAction` enum (`AddMember = 0`, `DelMember = 1`).
+  - `TeamMemberRecord` record (`Name`, `Id`, `LookFace`, `MaxHp`, `Hp` — 28 bytes per member).
+  - `MsgTeamMember` (PacketType 1026, 8-byte base header `[len:2][type:2][ucAction:1][ucAmount:1][pad:2]` + up to 5 member records).
+  - `TradeAction` enum (`Apply = 1`, `Quit = 2`, `Open = 3`, `Success = 4`, `False = 5`, `AddItem = 6`, `AddMoney = 7`, `MoneyAll = 10`, `Ok = 11`, `AddItemFail = 12`).
+  - `MsgTrade` (PacketType 1056, 12 bytes exact C++ binary layout `[len:2][type:2][data:4][usAction:2][pad:2]`).
+  - `SyndicateAction` enum (`ApplyJoin = 1`, `InviteJoin = 2`, `Leave = 3`, `KickOutMember = 4`, `QuerySynName = 6`, `DonateMoney = 11`, `QuerySynAttr = 12`, `SetSyn = 14`, `Demise = 116`).
+  - `MsgSyndicate` (PacketType 1107, 16 bytes base header `[len:2][type:2][usAction:2][pad:2][idTarget:4][idFealty:4]` + optional string).
+  - `MsgSynInfo` (PacketType 1114, 56 bytes exact layout `[len:2][type:2][idSyn:4][idFealty:4][dwFund:4][dwPopulation:4][ucRank:1][ucSaint:1][pad:2][szName:16][szLeader:16]`).
+  - `FriendAction` enum (`Apply = 10`, `Accept = 11`, `Online = 12`, `Offline = 13`, `Break = 14`, `GetInfo = 15`).
+  - `MsgFriend` (PacketType 1019, 32 bytes exact layout `[len:2][type:2][idFriend:4][dwLookFace:4][ucAction:1][ucOnline:1][ucLevel:1][pad:1][szName:16]`).
+- Created database entities and repositories in `Conquer.Data`:
+  - `SyndicateRepository.cs`: `SyndicateModel` (`cq_syndicate`), `SyndicateAttrModel` (`cq_synattr`), `ISyndicateRepository` & `SyndicateRepository` (Dapper async CRUD).
+  - `FriendRepository.cs`: `FriendModel` (`cq_friend`), `IFriendRepository` & `FriendRepository` (Dapper async CRUD).
+- Created runtime systems in `Conquer.Runtime`:
+  - `Team.cs`: `Team` and `TeamManager` (max 5 members, leader controls, close/open team toggles, exp sharing within 32-cell `ExpShareRange` with active member level scaling).
+  - `TradeSession.cs`: `TradeSession` and `TradeManager` (secure 2-phase commit state machine, max 10 items, staged silver, distance validation <= 18 cells, atomic commit swap, abort rollback).
+  - `Syndicate.cs`: `Syndicate` and `SyndicateManager` (hierarchy `Member`, `TeamLeader`, `Manager`, `HonoraryManager`, `DeputyLeader`, `Leader`, silver donations, allies, enemies, join/leave/kick).
+  - `FriendManager.cs`: In-memory friend relationships, bilateral tracking, online/offline status event notifications.
+  - `PacketReader.cs`: Added framing guard ensuring declared packet length trims wire trailer without allocating or overflowing string parsers.
+  - `MapGroupLoop.cs`: Integrated `TeamManager`, `TradeManager`, `SyndicateManager`, and `FriendManager`. Added packet handlers and message dispatch for `Talk` (Normal local view broadcast, Whisper direct echo, Team broadcast, Syndicate broadcast), `Team` (Create, ApplyJoin, Leave, Kick, Dismiss), `Trade` (Apply handshake, AddItem, AddMoney, Ok 2-phase commit, Quit abort), `Syndicate` (ApplyJoin, DonateMoney, Leave, Kick, Query), and `Friend` (Apply/Accept, Break, GetInfo). Hooked friend online/offline notifications into `AddPlayer`/`RemovePlayer`, and hooked team exp sharing into monster death in `ExecuteDeath`.
+- Added comprehensive test suites:
+  - `SocialSystemTests` (12 unit tests): `MsgTalk`, `MsgTeam`, `MsgTeamMember`, `MsgTrade`, `MsgSyndicate`, `MsgSynInfo`, `MsgFriend` binary roundtrips with trailer wire framing; `Team` 5-member capacity and leader removal; `TradeSession` 2-phase atomic swap; `TradeSession` abort rollback; `Syndicate` donations and rank hierarchy; `FriendManager` bidirectional relationships and online notifications.
+  - `SocialIntegrationTests` (4 integration tests): Local talk broadcast (within 18 cells) and direct whisper routing with echo; Team formation, invite acceptance, and nearby monster kill exp sharing; End-to-end 2-phase trade atomic exchange (item for silver); Guild creation and silver donation with updated `MsgSynInfo` broadcast.
+- Solution status: 95/95 tests passing (67 unit tests + 28 integration tests), 0 warnings, 0 errors across all 11 projects under `<TreatWarningsAsErrors>true</TreatWarningsAsErrors>`.
+
+### Phase 9 — Next Up
 **Where to continue:**
-- Phase 8: Guilds, teams, chat, friends, trading, relationships.
-- Chat system (`MsgTalk` channel routing: Talk, Whisper, Team, Guild, Broadcast), teams (`MsgTeam`, leader invite, join, leave, exp share), guilds (`cq_syndicate`, rank, donations, ally/enemy), trading (`MsgTrade`), friends/enemy list (`MsgFriend`).
+- Phase 9: NPC scripting, mining, quests, packaging, stress testing, and final polish.
+- Lua or C# scripting for NPCs (`cq_npc`, `cq_dynanpc`), task system (`cq_task`), mining system, server launch composition, client compatibility validation, stress tests under simulated concurrent load.
 
 
 
