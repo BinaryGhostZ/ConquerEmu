@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-Conquer.AccountServer-671d4ee5-2b8a-4158-adb4-96b60d3537ec</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.12" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Conquer.Shared\Conquer.Shared.csproj" />
+    <ProjectReference Include="..\Conquer.Net\Conquer.Net.csproj" />
+    <ProjectReference Include="..\Conquer.Data\Conquer.Data.csproj" />
+    <ProjectReference Include="..\Conquer.Runtime\Conquer.Runtime.csproj" />
+  </ItemGroup>
+</Project>

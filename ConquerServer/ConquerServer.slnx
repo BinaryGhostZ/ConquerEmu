@@ -1,0 +1,17 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Conquer.AccountServer/Conquer.AccountServer.csproj" />
+    <Project Path="src/Conquer.Data/Conquer.Data.csproj" />
+    <Project Path="src/Conquer.GameServer/Conquer.GameServer.csproj" />
+    <Project Path="src/Conquer.Host/Conquer.Host.csproj" />
+    <Project Path="src/Conquer.Net/Conquer.Net.csproj" />
+    <Project Path="src/Conquer.NpcServer/Conquer.NpcServer.csproj" />
+    <Project Path="src/Conquer.Runtime/Conquer.Runtime.csproj" />
+    <Project Path="src/Conquer.Shared/Conquer.Shared.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Conquer.IntegrationTests/Conquer.IntegrationTests.csproj" />
+    <Project Path="tests/Conquer.StressTests/Conquer.StressTests.csproj" />
+    <Project Path="tests/Conquer.UnitTests/Conquer.UnitTests.csproj" />
+  </Folder>
+</Solution>

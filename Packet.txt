@@ -1,0 +1,106 @@
+namespace ClassicConquer
+{
+
+    using PacketInvoker = CachedAttributeInvocation<PacketAttribute, NetPacketTypes>;
+
+    public class PacketAttribute : Attribute
+    {
+        public static readonly Func<PacketAttribute, NetPacketTypes> Translator = (attr) => attr.Type;
+        public NetPacketTypes Type { get; private set; }
+
+        public PacketAttribute(NetPacketTypes type)
+        {
+            this.Type = type;
+        }
+    }
+
+    /// <summary>
+    /// Handler delegate for incoming packets.
+    /// Uses ReadOnlySpan&lt;byte&gt; so handlers get a zero-copy, read-only view of the recv buffer.
+    /// </summary>
+    public delegate void PacketHandler(User user, ReadOnlySpan<byte> buffer);
+
+    public class CachedAttributeInvocation<TAttribute, TKey>
+        where TAttribute : Attribute
+        where TKey : struct
+    {
+        private readonly Dictionary<TKey, (TAttribute attr, Delegate invoker)> map;
+
+        public CachedAttributeInvocation(Type delegateType, Func<TAttribute, TKey> translator)
+        {
+            try
+            {
+                var assembly = Assembly.GetCallingAssembly();
+                map = new Dictionary<TKey, (TAttribute, Delegate)>();
+                foreach (var types in assembly.GetTypes())
+                {
+                    try
+                    {
+                        var methods = types.GetMethods(BindingFlags.Static | BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                        foreach (var method in methods)
+                        {
+                            foreach (var attribute in method.GetCustomAttributes(true))
+                            {
+                                try
+                                {
+                                    var testAttr = attribute as TAttribute;
+                                    if (testAttr != null)
+                                    {
+                                        var key = translator(testAttr);
+                                        var invoker = Delegate.CreateDelegate(delegateType, method);
+                                        map.Add(key, (testAttr, invoker));
+                                    }
+                                }
+                                catch (ArgumentException)
+                                {
+                                    // This happens because the old handlers use `Packet` and don't match the new `ReadOnlySpan<byte>` signature.
+                                    // Just print a clean warning so we know what needs migrating, instead of a massive stack trace.
+                                    Console.WriteLine($"[Migration] Skipping old handler: {method.DeclaringType.Name}.{method.Name}");
+                                }
+                                catch (Exception e) { Console.WriteLine(e.ToString()); }
+                            }
+                        }
+                    }
+                    catch (Exception e) { MyConsole.SaveException(e); }
+                }
+            }
+            catch (ReflectionTypeLoadException e) { MyConsole.SaveException(e); }
+        }
+
+        public bool TryGetInvoker<TAction>(TKey key, out TAction action) where TAction : Delegate
+        {
+            if (map.TryGetValue(key, out var entry))
+            {
+                action = (TAction)entry.invoker;
+                return true;
+            }
+            action = null;
+            return false;
+        }
+
+        public bool TryGetInvoker<TAction>(TKey key, out TAttribute attr, out TAction action) where TAction : Delegate
+        {
+            if (map.TryGetValue(key, out var entry))
+            {
+                attr = entry.attr;
+                action = (TAction)entry.invoker;
+                return true;
+            }
+            attr = null;
+            action = null;
+            return false;
+        }
+    }
+
+
+                var PacketID = (NetPacketTypes)BinaryPrimitives.ReadUInt16LittleEndian(buffer.AsSpan(2));
+
+                try
+                {
+                  
+                    if (MsgInvoker.TryGetInvoker<PacketHandler>(PacketID, out var hinvoker))
+                    {
+                        hinvoker(client, buffer.AsSpan(0, length));
+                    }
+                }
+                catch (Exception e) { MyConsole.SaveException(e); }

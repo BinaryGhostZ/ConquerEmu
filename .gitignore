@@ -1,0 +1,17 @@
+## .NET Build Artifacts
+**/bin/
+**/obj/
+**/TestResults/
+
+## Visual Studio / IDE Files
+.vs/
+.idea/
+.vscode/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+## Archives and Logs
+*.7z
+*.log
