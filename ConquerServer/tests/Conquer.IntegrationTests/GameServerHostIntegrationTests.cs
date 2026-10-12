@@ -16,10 +16,12 @@ public class GameServerHostIntegrationTests
     public async Task GameServerWorker_StartsAndBindsListeners_GracefulShutdown()
     {
         const int testGamePort = 15816;
+        const int testIpcPort = 15817;
         var config = new WorldHostConfig
         {
             ServerName = "TestConquerServer",
             ListenPort = testGamePort,
+            IpcPort = testIpcPort,
             MapGroupCount = 2
         };
 
@@ -70,12 +72,13 @@ public class GameServerHostIntegrationTests
     public async Task GameServerWorker_HandlesIpcLogin_AndClientPairing()
     {
         const int testGamePort = 15826;
-        const int ipcPort = 5817; // standard IPC port configured in GameServerWorker
+        const int testIpcPort = 15827;
 
         var config = new WorldHostConfig
         {
             ServerName = "TestConquerServer",
             ListenPort = testGamePort,
+            IpcPort = testIpcPort,
             MapGroupCount = 2
         };
 
@@ -93,7 +96,7 @@ public class GameServerHostIntegrationTests
 
         // 1. Connect IPC socket and send MsgLoginAccount
         using var ipcSocket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-        await ipcSocket.ConnectAsync(new IPEndPoint(IPAddress.Loopback, ipcPort));
+        await ipcSocket.ConnectAsync(new IPEndPoint(IPAddress.Loopback, testIpcPort));
 
         var writerIpc = new PacketWriter();
         byte[] ipcPacket;

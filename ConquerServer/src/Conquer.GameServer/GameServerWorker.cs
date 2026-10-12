@@ -59,7 +59,7 @@ public sealed class GameServerWorker : BackgroundService
         _worldHost.Start();
 
         // 2. Start IPC listener for AccountServer login pairing on port 5817
-        const int ipcPort = 5817;
+        int ipcPort = _config.IpcPort;
         var ipcListener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
         ipcListener.Bind(new IPEndPoint(IPAddress.Any, ipcPort));
         ipcListener.Listen(50);

@@ -37,6 +37,9 @@ public sealed class WorldHostConfig
 
     /// <summary>Game server listen port.</summary>
     public int ListenPort { get; set; } = 5816;
+
+    /// <summary>Account server IPC listen port.</summary>
+    public int IpcPort { get; set; } = 5817;
 }
 
 /// <summary>

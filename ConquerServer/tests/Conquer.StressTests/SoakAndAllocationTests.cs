@@ -45,10 +45,10 @@ public class SoakAndAllocationTests
         }
     }
 
-    private static InternalMessage CreateClientMessage(int socketId, PacketType type, byte[] payload)
+    private static InternalMessage CreateClientMessage(int socketId, PacketType type, ReadOnlySpan<byte> payload)
     {
         byte[] rented = ArrayPool<byte>.Shared.Rent(payload.Length);
-        payload.CopyTo(rented, 0);
+        payload.CopyTo(rented);
 
         return InternalMessage.WithPayload(
             InternalMessageId.KernelClientMsg,
@@ -57,6 +57,9 @@ public class SoakAndAllocationTests
             rentedBuffer: rented,
             length: payload.Length);
     }
+
+    private static InternalMessage CreateClientMessage(int socketId, PacketType type, byte[] payload) =>
+        CreateClientMessage(socketId, type, payload.AsSpan());
 
     [Fact]
     public void ZeroAllocation_PacketHotPaths_UnderSustainedThroughput()
@@ -165,22 +168,30 @@ public class SoakAndAllocationTests
 
                 tasks[pIndex] = Task.Run(() =>
                 {
+                    Span<byte> stackBuf = stackalloc byte[64];
                     for (int m = 0; m < messagesPerPlayer; m++)
                     {
+                        var pw = new PacketWriter(stackBuf);
                         var walk = new MsgWalk(playerId, (Direction)(m % 8), WalkMode.Walk);
-                        var buf = MsgWalk.Encode(walk);
-                        mapGroup.Post(CreateClientMessage(socketId, PacketType.Walk, buf));
+                        walk.Encode(ref pw);
+                        mapGroup.Post(CreateClientMessage(socketId, PacketType.Walk, pw.AsSpan()));
                     }
                 });
             }
 
             await Task.WhenAll(tasks);
 
-            // Wait a brief period for background worker to process queue
-            await Task.Delay(500);
+            // Wait for queue to drain completely without backlog growth
+            const int expectedTotal = playerCount * messagesPerPlayer;
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (mapGroup.Metrics.TotalHandled < expectedTotal && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(10);
+            }
 
             sw.Stop();
-            Assert.True(sw.ElapsedMilliseconds < 5000, $"Processed {playerCount * messagesPerPlayer} messages in {sw.ElapsedMilliseconds}ms");
+            Assert.True(mapGroup.Metrics.TotalHandled >= expectedTotal, $"Expected at least {expectedTotal} handled, got {mapGroup.Metrics.TotalHandled}");
+            Assert.True(sw.ElapsedMilliseconds < 5000, $"Processed {expectedTotal} messages in {sw.ElapsedMilliseconds}ms");
         }
         finally
         {
@@ -322,12 +333,13 @@ public class SoakAndAllocationTests
         try
         {
             // Cast spells concurrently
+            Span<byte> magicStackBuf = stackalloc byte[64];
             for (int i = 0; i < encounterCount; i++)
             {
+                var pw = new PacketWriter(magicStackBuf);
                 var magicMsg = MsgInteract.CreateMagicAttack(casters[i].Id, targets[i].Id, 20, 20, magicType: 1000, magicLevel: 0);
-                var buf = new byte[MsgInteract.PacketSize];
-                magicMsg.Encode(buf);
-                mapGroup.Post(CreateClientMessage(casters[i].SocketId, PacketType.Interact, buf));
+                magicMsg.Encode(ref pw);
+                mapGroup.Post(CreateClientMessage(casters[i].SocketId, PacketType.Interact, pw.AsSpan()));
             }
 
             var deadline = DateTime.UtcNow.AddSeconds(3);
@@ -376,10 +388,10 @@ public class SoakAndAllocationTests
             // Concurrently route 20,000 messages while re-binding between loops
             var routeTask = Task.Run(() =>
             {
-                var buf = new byte[8];
+                Span<byte> tickBuf = stackalloc byte[8];
                 for (int i = 0; i < totalMessages; i++)
                 {
-                    var msg = CreateClientMessage(socketId, PacketType.Tick, buf);
+                    var msg = CreateClientMessage(socketId, PacketType.Tick, tickBuf);
                     if (router.Route(socketId, msg))
                     {
                         Interlocked.Increment(ref successfulRoutes);

@@ -75,7 +75,7 @@ public abstract partial class GameLoop : IDisposable
     private Task? _loopTask;
 
     protected ILogger Logger { get; }
-    protected LoopMetrics Metrics { get; }
+    public LoopMetrics Metrics { get; }
     protected TimeProvider Clock { get; }
 
     /// <summary>Name of this loop for logging and metrics.</summary>
