@@ -26,17 +26,26 @@ public class SoakAndAllocationTests
     private sealed class MockSocket : IGameSocket
     {
         public List<byte[]> SentPackets { get; } = [];
+        public int SendCount;
         public bool Disconnected { get; private set; }
         public int PendingSends => 0;
 
         public void Send(ReadOnlySpan<byte> packet)
         {
-            SentPackets.Add(packet.ToArray());
+            SendCount++;
+            if (SentPackets.Count < 10)
+            {
+                SentPackets.Add(packet.ToArray());
+            }
         }
 
         public void SendBatch(ReadOnlySpan<byte> wholePackets)
         {
-            SentPackets.Add(wholePackets.ToArray());
+            SendCount++;
+            if (SentPackets.Count < 10)
+            {
+                SentPackets.Add(wholePackets.ToArray());
+            }
         }
 
         public void Disconnect()
@@ -210,12 +219,21 @@ public class SoakAndAllocationTests
         // Populate map with 1,000 entities spread across 500x500 grid
         for (int i = 0; i < totalEntities; i++)
         {
-            var player = new Player((uint)(50000 + i), $"Entity_{i}", 1);
+            var player = new Player((uint)(50000 + i), $"Entity_{i}", 1)
+            {
+                Socket = new MockSocket()
+            };
             int x = 10 + (i % 30) * 15;
             int y = 10 + (i / 30) * 15;
             map.Enter(player, x, y);
             entities.Add(player);
         }
+
+        Span<byte> walkBuf = stackalloc byte[64];
+        var pw = new PacketWriter(walkBuf);
+        var sampleWalk = new MsgWalk(1, Direction.NorthEast, WalkMode.Walk);
+        sampleWalk.Encode(ref pw);
+        var movementSpan = pw.AsSpan();
 
         var sw = Stopwatch.StartNew();
 
@@ -226,7 +244,7 @@ public class SoakAndAllocationTests
             int newX = Math.Clamp(p.PosX + (step % 3 - 1), 5, 495);
             int newY = Math.Clamp(p.PosY + (step % 2 == 0 ? 1 : -1), 5, 495);
 
-            map.Move(p, newX, newY);
+            map.Move(p, newX, newY, movementSpan);
 
             int bx = GameMap.Block(newX);
             int by = GameMap.Block(newY);
@@ -235,7 +253,9 @@ public class SoakAndAllocationTests
         }
 
         sw.Stop();
-        Assert.True(sw.ElapsedMilliseconds < 2000, $"10,000 entity movements and 9-grid evaluations completed in {sw.ElapsedMilliseconds}ms");
+        int totalBroadcasts = entities.Sum(e => ((MockSocket)e.Socket!).SendCount);
+        Assert.True(totalBroadcasts > 0, "Observers must receive spatial broadcasts");
+        Assert.True(sw.ElapsedMilliseconds < 3000, $"10,000 entity movements and 9-grid evaluations completed in {sw.ElapsedMilliseconds}ms with {totalBroadcasts} broadcasts delivered");
     }
 
     [Fact]
