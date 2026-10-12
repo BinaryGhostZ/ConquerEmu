@@ -277,7 +277,28 @@ public class SoakAndAllocationTests
 
         const int producerCount = 8;
         const int packetsPerProducer = 2_000;
+        const int packetWireSize = 16;
+        const long totalBytesExpected = (long)producerCount * packetsPerProducer * packetWireSize;
         var packetData = new byte[] { 8, 0, 10, 0, 1, 2, 3, 4 };
+
+        long totalReceived = 0;
+        var receiveTask = Task.Run(async () =>
+        {
+            byte[] recvBuf = new byte[16384];
+            while (totalReceived < totalBytesExpected)
+            {
+                try
+                {
+                    int r = await clientSocket.ReceiveAsync(recvBuf.AsMemory(), SocketFlags.None);
+                    if (r <= 0) break;
+                    Interlocked.Add(ref totalReceived, r);
+                }
+                catch
+                {
+                    break;
+                }
+            }
+        });
 
         var sw = Stopwatch.StartNew();
 
@@ -289,10 +310,13 @@ public class SoakAndAllocationTests
             }
         });
 
+        await receiveTask;
         sw.Stop();
 
-        // Verify socket handled 16,000 packet sends without exception or lockup
-        Assert.True(sw.ElapsedMilliseconds < 3000, $"16,000 socket packet sends completed in {sw.ElapsedMilliseconds}ms");
+        // Verify socket handled and drained 16,000 packet sends without exception, lockup, or data loss
+        Assert.Equal(totalBytesExpected, totalReceived);
+        Assert.Equal(0, securitySocket.PendingSends);
+        Assert.True(sw.ElapsedMilliseconds < 5000, $"16,000 socket packet sends completed in {sw.ElapsedMilliseconds}ms");
         securitySocket.Disconnect();
     }
 
